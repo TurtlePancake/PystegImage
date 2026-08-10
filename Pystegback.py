@@ -5,8 +5,7 @@ from PIL import Image
 
 
 #Each message byte is stored across 9 colour values: 8 hold the bits and the
-#9th is a "keep going" flag - even means another byte follows, odd means this
-#was the last one. Both sides have to agree on this or decoding never stops.
+#9th is a "keep going" flag 
 VALUES_PER_BYTE = 9
 
 
@@ -28,7 +27,7 @@ class PyStegEncoder():
         
 
 
-    #Returns the message to hide, reading it off disk when the user picked a text file
+    #Returns the message to hide. If a text file selected, read from the file
     def getMessage(self):
         if self.messageSource == "file":
             if not self.messageFilePath:
@@ -72,7 +71,7 @@ class PyStegEncoder():
         for x in range(messageDataLen):
             pixels = [v for v in next(imageData)[:3] + next(imageData)[:3] + next(imageData)[:3]]
 
-            #8 bits make a byte
+            #8 bits
             for i in range(8):
                 #if the bit is 1, make the pixel value odd, if 0 make it even
                 if messageDataList[x][i] == '0' and pixels[i] % 2 != 0:
@@ -84,9 +83,7 @@ class PyStegEncoder():
                         pixels[i] += 1
 
             #Next is to check if the message is done, if it is, we make the 9th
-            #value odd as a stop marker. Every other byte has to have it forced
-            #even, otherwise the decoder stops at the first byte whose 9th value
-            #was already odd in the original image.
+            #value odd as a stop marker. 
             if x == messageDataLen - 1:
                 if pixels[8] % 2 == 0:
                     if pixels[8] != 0:
@@ -107,28 +104,22 @@ class PyStegEncoder():
         image = Image.open(self.imagePath, 'r')
 
 
-        #Creates a copy of the image that will be the new image. Converting to
-        #RGB keeps the pixels as plain (r, g, b) triples - palette images (GIF,
-        #P-mode PNG) hand back bare ints and RGBA hands back 4-tuples, neither
-        #of which the LSB code below can work with.
+        #Creates a copy of the image that will be the new image.
         newImage = image.convert("RGB")
 
 
         #encodes the message into the image using the modifyPixel function
-        #Snapshot the original pixels so reading them isn't affected by the
-        #putpixel writes happening as we go.
         originalPixels = list(newImage.getdata())
 
         a = 0
 
+        #Puts the modified pixel values into the new image, one pixel at a time
         for pixel in self.modifyPixel(originalPixels, self.getMessage()):
             newImage.putpixel((a % newImage.size[0], a // newImage.size[0]), pixel)
             a += 1
 
 
-        #Saves the new image with the encoded message to the output path.
-        #Letting PIL infer the format from the file extension avoids passing
-        #a bad format string (e.g. "JPG", which PIL doesn't recognize - it wants "JPEG").
+        #Saves the new image with the encoded message to the output path. Cannot be JPG
         newImage.save(self.outputImagePath)
 
 
@@ -173,7 +164,7 @@ class PyStegDecoder():
 
         while True:
             #An image with no message in it has no stop marker, so we can run
-            #out of pixels. Report that instead of letting StopIteration escape.
+            #out of pixels.
             try:
                 pixels = [v for v in next(imgData)[:3] + next(imgData)[:3] + next(imgData)[:3]]
             except StopIteration:
