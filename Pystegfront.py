@@ -250,11 +250,8 @@ class EncodeTab(ctk.CTkFrame):
 
         # ------------------------------------------------------------------
         # BACKEND CONNECTION POINT
-        # This is where the frontend hands off to Pystegback.PyStegEncoder.
-        # checkImageSize / OpenImage / convertToBinary still need a finished
-        # encode() method wired up backend-side before this actually writes
-        # a stego image — for now we just construct the encoder and report
-        # that the backend logic isn't finished yet.
+        # Hands off to Pystegback.PyStegEncoder, which reads the message from
+        # messageFilePath itself when messageSource is "file".
         # ------------------------------------------------------------------
         try:
             encoder = Pystegback.PyStegEncoder(
@@ -269,19 +266,26 @@ class EncodeTab(ctk.CTkFrame):
             self.app.set_status("Encoder failed to start.", kind="error")
             return
 
-        self.app.set_status(f"Encoder created for {Path(output_image_path).name} — backend logic not finished yet.",
-                             kind="pending")
+        self.app.set_status(f"Encoding into {Path(output_image_path).name}...", kind="pending")
         print("Encode payload:", payload)
 
 
         #If the encoder makes it here, it starts process one
         #First checks if the image is big enough to hold the text
-        if encoder.checkImageSize() == False:
-            messagebox.showerror("Image to small!", f"The image is too small to hold the message, try getting a bigger image")
+        try:
+            if encoder.checkImageSize() == False:
+                messagebox.showerror("Image to small!", f"The image is too small to hold the message, try getting a bigger image")
+                self.app.set_status("Cover image too small for that message.", kind="error")
+                return
 
-        else:
             #If the image is big enough, it will convert the text to binary
             encoder.encode()
+        except Exception as exc:
+            messagebox.showerror("Encoding failed", f"Could not encode the message:\n{exc}")
+            self.app.set_status("Encoding failed.", kind="error")
+            return
+
+        self.app.set_status(f"Message hidden in {Path(output_image_path).name}.", kind="success")
 
 
 
@@ -365,18 +369,30 @@ class DecodeTab(ctk.CTkFrame):
 
         # ------------------------------------------------------------------
         # BACKEND CONNECTION POINT
-        # Pystegback.py only has a commented-out PyStegDecoder class so far.
-        # Once it's implemented, this is where it gets called, e.g.:
-        #
-        #     decoder = Pystegback.PyStegDecoder()
-        #     message = decoder.decode(payload["stego_image_path"])
-        #     Path(payload["decoded_output_path"]).write_text(message)
-        #
-        # For now we just stage the payload so the UI can be wired up ahead
-        # of the backend being ready.
+        # Hands off to Pystegback.PyStegDecoder. decode() raises ValueError
+        # when the image has no hidden message in it, so everything from here
+        # down runs inside a try/except — an exception escaping a Tk callback
+        # would otherwise just dump a traceback to the console with no
+        # feedback in the UI.
         # ------------------------------------------------------------------
-        self.app.set_status(f"Payload ready — backend not connected yet ({Path(decoded_output_path).name})",
-                             kind="pending")
+        self.app.set_status(f"Decoding {Path(stego_image_path).name}...", kind="pending")
+
+        try:
+            decoder = Pystegback.PyStegDecoder(
+                imagePath=payload["stego_image_path"],
+                outputMessagePath=payload["decoded_output_path"]
+            )
+
+            message = decoder.decode()
+
+            Path(payload["decoded_output_path"]).write_text(message, encoding="utf-8")
+        except Exception as exc:
+            messagebox.showerror("Decoding failed", f"Could not decode the message:\n{exc}")
+            self.app.set_status("Decoding failed.", kind="error")
+            return
+
+        self.app.set_status(f"Message saved to {Path(decoded_output_path).name}.", kind="success")
+
         print("Decode payload:", payload)
 
 
