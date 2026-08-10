@@ -2,8 +2,6 @@
 
 **PystegImage** is a application that allows you to hide messages in images (Steganography)
 
-A update will add cryptography to allow a message to be encoded itself
-
 # Prerequisites
 
 To use the program, you need:
@@ -37,3 +35,9 @@ ENCODING
 DECODING
 1. Encoded Image (The image with the message in it)
 2. Decoded Message Save Location (where the text file with the message is saved).
+
+---------------------------------------------------------------------------
+# Final Notes
+A update will add cryptography to allow a message to be encoded itself. The LSB method is quite popular.
+
+Claude did help create the frontend and touch up the backend to fix some bugs.
