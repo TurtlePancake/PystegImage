@@ -248,11 +248,7 @@ class EncodeTab(ctk.CTkFrame):
             "output_image_path": output_image_path,
         }
 
-        # ------------------------------------------------------------------
-        # BACKEND CONNECTION POINT
-        # Hands off to Pystegback.PyStegEncoder, which reads the message from
-        # messageFilePath itself when messageSource is "file".
-        # ------------------------------------------------------------------
+        #Connects to the backend, creates a PyStegEncoder object, and calls its encode() method
         try:
             encoder = Pystegback.PyStegEncoder(
                 imagePath=payload["cover_image_path"],
@@ -367,16 +363,10 @@ class DecodeTab(ctk.CTkFrame):
             "decoded_output_path": decoded_output_path,
         }
 
-        # ------------------------------------------------------------------
-        # BACKEND CONNECTION POINT
-        # Hands off to Pystegback.PyStegDecoder. decode() raises ValueError
-        # when the image has no hidden message in it, so everything from here
-        # down runs inside a try/except — an exception escaping a Tk callback
-        # would otherwise just dump a traceback to the console with no
-        # feedback in the UI.
-        # ------------------------------------------------------------------
         self.app.set_status(f"Decoding {Path(stego_image_path).name}...", kind="pending")
 
+
+        #connects to the backend, creates a PyStegDecoder object, and calls its decode() method
         try:
             decoder = Pystegback.PyStegDecoder(
                 imagePath=payload["stego_image_path"],
