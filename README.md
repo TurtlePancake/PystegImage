@@ -2,6 +2,8 @@
 
 **PystegImage** is a application that allows you to hide messages in images (Steganography)
 
+A update will add cryptography to allow a message to be encoded itself
+
 # Prerequisites
 
 To use the program, you need:
