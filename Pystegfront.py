@@ -2,7 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from pathlib import Path
-import Pystegback  # Backend module (in progress) — see the "BACKEND CONNECTION POINT" comments below
+import Pystegback  # Backend module: LSB steganography plus the Argon2/Fernet encryption layer
 
 from PIL import Image
 
@@ -64,6 +64,57 @@ class ImagePreview(ctk.CTkLabel):
         self.configure(image=None, text="No image selected")
 
 
+class PasswordDialog(ctk.CTkToplevel):
+    """Shows the encryption password after encoding, with a button to copy it."""
+
+    def __init__(self, master, password: str, generated: bool):
+        super().__init__(master)
+
+        self.password = password
+
+        self.title("Encryption Password")
+        self.geometry("460x260")
+        self.resizable(False, False)
+        self.grid_columnconfigure(0, weight=1)
+
+        heading = "A password was generated for you" if generated else "Your message was encrypted"
+        ctk.CTkLabel(self, text=heading, font=ctk.CTkFont(size=16, weight="bold"),
+                     anchor="w").grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 2))
+
+        ctk.CTkLabel(self, text="Share it with the recipient through a separate, trusted channel.\n"
+                                "Without it the hidden message cannot be recovered — there is no way "
+                                "to reset it.",
+                     justify="left", anchor="w", wraplength=420,
+                     text_color="gray65").grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 12))
+
+        self.password_entry = ctk.CTkEntry(self, height=38, font=ctk.CTkFont(size=15, family="Consolas"))
+        self.password_entry.insert(0, password)
+        self.password_entry.configure(state="readonly")
+        self.password_entry.grid(row=2, column=0, sticky="ew", padx=20)
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=3, column=0, sticky="ew", padx=20, pady=(14, 18))
+        buttons.grid_columnconfigure(0, weight=1)
+
+        self.copy_button = ctk.CTkButton(buttons, text="Copy to clipboard", height=36,
+                                         command=self.copy_password)
+        self.copy_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        ctk.CTkButton(buttons, text="Done", width=100, height=36, fg_color="gray30",
+                      hover_color="gray38", command=self.destroy).grid(row=0, column=1)
+
+        # Keep the dialog in front of the main window until it is dismissed
+        self.transient(master)
+        self.after(100, self.grab_set)
+
+    def copy_password(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.password)
+        self.update()
+        self.copy_button.configure(text="Copied")
+        self.after(1500, lambda: self.copy_button.configure(text="Copy to clipboard"))
+
+
 def make_card(parent, title: str):
     """Build a titled 'card' panel and return (card_frame, body_frame) so callers just fill body_frame."""
     card = ctk.CTkFrame(parent, fg_color=CARD_FG, corner_radius=14, border_width=1, border_color=CARD_BORDER)
@@ -91,11 +142,16 @@ class EncodeTab(ctk.CTkFrame):
         self.message_source = tk.StringVar(value="text")  # "text" or "file"
         self.message_text_file_path = tk.StringVar()
         self.output_image_path = tk.StringVar()
+        self.encrypt_enabled = tk.BooleanVar(value=True)
+        self.password_text = tk.StringVar()
 
         self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=0, column=0, sticky="ew")
+        # Scrollable so the cards are never cut off on a short screen - the
+        # Encode button below stays put and always stays reachable.
+        content = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        content.grid(row=0, column=0, sticky="nsew")
         content.grid_columnconfigure(0, weight=1)
 
         # --- Cover image card ---
@@ -142,9 +198,36 @@ class EncodeTab(ctk.CTkFrame):
 
         self._show_text_input()
 
+        # --- Encryption card ---
+        # The message is encrypted before it is hidden: Argon2id turns the password
+        # into a key and Fernet encrypts with it. Leaving the box empty makes the
+        # backend generate a strong password, which is then shown to the user.
+        crypto_card, crypto_body = make_card(content, "Encryption")
+        crypto_card.grid(row=2, column=0, sticky="ew", pady=8)
+        crypto_body.grid_columnconfigure(0, weight=1)
+
+        self.encryption_toggle = ctk.CTkSegmentedButton(
+            crypto_body, values=["Encrypt", "No encryption"],
+            command=self.on_encryption_change)
+        self.encryption_toggle.set("Encrypt")
+        self.encryption_toggle.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        self.password_entry = ctk.CTkEntry(
+            crypto_body, textvariable=self.password_text, height=32, show="•",
+            placeholder_text="Password (leave blank to generate a strong one)")
+        self.password_entry.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+
+        self.generate_button = ctk.CTkButton(crypto_body, text="Generate", width=90, height=32,
+                                             command=self.generate_password)
+        self.generate_button.grid(row=1, column=1)
+
+        self.show_password_switch = ctk.CTkSwitch(crypto_body, text="Show password",
+                                                  command=self.toggle_password_visibility)
+        self.show_password_switch.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
         # --- Output card ---
         output_card, output_body = make_card(content, "Save Encoded Image To")
-        output_card.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        output_card.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         output_body.grid_columnconfigure(0, weight=1)
 
         self.output_path_entry = ctk.CTkEntry(
@@ -178,6 +261,25 @@ class EncodeTab(ctk.CTkFrame):
         self.message_textbox.grid_forget()
         self.message_file_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.message_file_button.grid(row=0, column=1)
+
+    def on_encryption_change(self, selection: str):
+        encrypting = selection == "Encrypt"
+        self.encrypt_enabled.set(encrypting)
+
+        state = "normal" if encrypting else "disabled"
+        self.password_entry.configure(state=state)
+        self.generate_button.configure(state=state)
+        self.show_password_switch.configure(state=state)
+
+    def generate_password(self):
+        # Same generator the backend falls back to, so the user can see the
+        # password before encoding rather than only afterwards
+        self.password_text.set(Pystegback.generatePassword())
+        self.show_password_switch.select()
+        self.toggle_password_visibility()
+
+    def toggle_password_visibility(self):
+        self.password_entry.configure(show="" if self.show_password_switch.get() else "•")
 
     def browse_cover_image(self):
         path = filedialog.askopenfilename(title="Select cover image", filetypes=IMAGE_FILETYPES)
@@ -240,12 +342,20 @@ class EncodeTab(ctk.CTkFrame):
                 messagebox.showerror("Missing text file", "Please select a text file containing your message.")
                 return
 
+        # A blank password means "generate one" — the backend hands it back so it
+        # can be shown. Whitespace is trimmed here and on the decode side so a
+        # password copied with a stray space still works.
+        encrypt = self.encrypt_enabled.get()
+        password = self.password_text.get().strip() if encrypt else None
+
         payload = {
             "cover_image_path": cover_image_path,
             "message_source": source,       # "text" or "file"
             "message_text": message,        # set when message_source == "text"
             "message_text_file_path": message_text_file_path,  # set when message_source == "file"
             "output_image_path": output_image_path,
+            "encrypt": encrypt,
+            "password": password or None,   # None -> backend generates one
         }
 
         #Connects to the backend, creates a PyStegEncoder object, and calls its encode() method
@@ -256,6 +366,8 @@ class EncodeTab(ctk.CTkFrame):
                 messageText=payload["message_text"],
                 messageFilePath=payload["message_text_file_path"],
                 outputImagePath=payload["output_image_path"],
+                encrypt=payload["encrypt"],
+                password=payload["password"],
             )
         except Exception as exc:
             messagebox.showerror("Backend error", f"Could not create the encoder:\n{exc}")
@@ -263,7 +375,10 @@ class EncodeTab(ctk.CTkFrame):
             return
 
         self.app.set_status(f"Encoding into {Path(output_image_path).name}...", kind="pending")
-        print("Encode payload:", payload)
+        self.update_idletasks()  # Argon2 blocks for a moment, so paint the status first
+
+        #The password is deliberately kept out of the console log
+        print("Encode payload:", {**payload, "password": "***" if payload["password"] else None})
 
 
         #If the encoder makes it here, it starts process one
@@ -275,13 +390,21 @@ class EncodeTab(ctk.CTkFrame):
                 return
 
             #If the image is big enough, it will convert the text to binary
-            encoder.encode()
+            #encode() returns the password when encryption was used, so it can be
+            #shown to the user - generated or not
+            password_used = encoder.encode()
         except Exception as exc:
             messagebox.showerror("Encoding failed", f"Could not encode the message:\n{exc}")
             self.app.set_status("Encoding failed.", kind="error")
             return
 
-        self.app.set_status(f"Message hidden in {Path(output_image_path).name}.", kind="success")
+        if password_used:
+            self.app.set_status(
+                f"Message encrypted and hidden in {Path(output_image_path).name}. "
+                "Keep the password safe.", kind="success")
+            PasswordDialog(self.app, password_used, generated=not payload["password"])
+        else:
+            self.app.set_status(f"Message hidden in {Path(output_image_path).name}.", kind="success")
 
 
 
@@ -294,11 +417,14 @@ class DecodeTab(ctk.CTkFrame):
 
         self.stego_image_path = tk.StringVar()
         self.decoded_output_path = tk.StringVar()
+        self.password_text = tk.StringVar()
 
         self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=0, column=0, sticky="ew")
+        # Scrollable for the same reason as the encode tab
+        content = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        content.grid(row=0, column=0, sticky="nsew")
         content.grid_columnconfigure(0, weight=1)
 
         # --- Encoded image card ---
@@ -317,9 +443,25 @@ class DecodeTab(ctk.CTkFrame):
         self.preview = ImagePreview(image_body)
         self.preview.grid(row=1, column=0, columnspan=2, pady=(8, 0))
 
+        # --- Password card ---
+        # Only needed for images encoded with encryption on. The backend spots an
+        # encrypted payload by its header, so a plain image ignores this field.
+        crypto_card, crypto_body = make_card(content, "Password")
+        crypto_card.grid(row=1, column=0, sticky="ew", pady=8)
+        crypto_body.grid_columnconfigure(0, weight=1)
+
+        self.password_entry = ctk.CTkEntry(
+            crypto_body, textvariable=self.password_text, height=32, show="•",
+            placeholder_text="Password from the sender (leave blank if not encrypted)")
+        self.password_entry.grid(row=0, column=0, sticky="ew")
+
+        self.show_password_switch = ctk.CTkSwitch(crypto_body, text="Show password",
+                                                  command=self.toggle_password_visibility)
+        self.show_password_switch.grid(row=1, column=0, sticky="w", pady=(8, 0))
+
         # --- Output card ---
         output_card, output_body = make_card(content, "Save Decoded Message To")
-        output_card.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        output_card.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         output_body.grid_columnconfigure(0, weight=1)
 
         self.output_path_entry = ctk.CTkEntry(
@@ -333,6 +475,9 @@ class DecodeTab(ctk.CTkFrame):
         # --- Decode button ---
         ctk.CTkButton(self, text="Decode Message", height=42, font=ctk.CTkFont(size=15, weight="bold"),
                        command=self.decode).grid(row=1, column=0, sticky="ew", pady=(12, 0))
+
+    def toggle_password_visibility(self):
+        self.password_entry.configure(show="" if self.show_password_switch.get() else "•")
 
     def browse_stego_image(self):
         path = filedialog.askopenfilename(title="Select encoded image", filetypes=IMAGE_FILETYPES)
@@ -361,21 +506,45 @@ class DecodeTab(ctk.CTkFrame):
         payload = {
             "stego_image_path": stego_image_path,
             "decoded_output_path": decoded_output_path,
+            #Trimmed the same way as on the encode side
+            "password": self.password_text.get().strip() or None,
         }
 
         self.app.set_status(f"Decoding {Path(stego_image_path).name}...", kind="pending")
+        self.update_idletasks()  # Argon2 blocks for a moment, so paint the status first
 
 
         #connects to the backend, creates a PyStegDecoder object, and calls its decode() method
         try:
             decoder = Pystegback.PyStegDecoder(
                 imagePath=payload["stego_image_path"],
-                outputMessagePath=payload["decoded_output_path"]
+                outputMessagePath=payload["decoded_output_path"],
+                password=payload["password"],
             )
 
             message = decoder.decode()
 
             Path(payload["decoded_output_path"]).write_text(message, encoding="utf-8")
+
+        #The encryption errors get their own messages so the user knows whether
+        #the password is missing, wrong, or the image itself is damaged
+        except Pystegback.PasswordRequiredError:
+            messagebox.showerror("Password needed",
+                                  "This image holds an encrypted message.\n\n"
+                                  "Enter the password you were given by the sender and try again.")
+            self.app.set_status("Password needed to decode this image.", kind="error")
+            return
+        except Pystegback.WrongPasswordError:
+            messagebox.showerror("Incorrect password",
+                                  "That password did not unlock the message.\n\n"
+                                  "Check it for typos — it is case sensitive — or ask the sender "
+                                  "to resend it.")
+            self.app.set_status("Incorrect password.", kind="error")
+            return
+        except Pystegback.PayloadFormatError as exc:
+            messagebox.showerror("Damaged message", f"The hidden message could not be read:\n{exc}")
+            self.app.set_status("Hidden message is damaged.", kind="error")
+            return
         except Exception as exc:
             messagebox.showerror("Decoding failed", f"Could not decode the message:\n{exc}")
             self.app.set_status("Decoding failed.", kind="error")
@@ -383,7 +552,7 @@ class DecodeTab(ctk.CTkFrame):
 
         self.app.set_status(f"Message saved to {Path(decoded_output_path).name}.", kind="success")
 
-        print("Decode payload:", payload)
+        print("Decode payload:", {**payload, "password": "***" if payload["password"] else None})
 
 
 class SteganographyApp(ctk.CTk):
@@ -391,9 +560,14 @@ class SteganographyApp(ctk.CTk):
         super().__init__()
 
         self.title("PystegImage")
-        self.geometry("620x850")
-        self.minsize(620, 850)
-        self._center_on_screen(620, 850)
+
+        # The encode tab grew an encryption card, so the window needs more height -
+        # capped to the screen so it still fits on shorter displays.
+        width = 640
+        height = min(980, self.winfo_screenheight() - 100)
+        self.geometry(f"{width}x{height}")
+        self.minsize(width, 640)
+        self._center_on_screen(width, height)
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -403,7 +577,7 @@ class SteganographyApp(ctk.CTk):
         header.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 6))
 
         ctk.CTkLabel(header, text="PystegImage", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(header, text="Hide and reveal secret messages inside images",
+        ctk.CTkLabel(header, text="Hide and reveal secret messages inside images, encrypted with a password",
                      font=ctk.CTkFont(size=13), text_color="gray65").pack(anchor="w")
 
         # --- Tabs ---
